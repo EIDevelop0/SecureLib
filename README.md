@@ -1,194 +1,258 @@
 # SecureLib
 
-Private Android security library distributed via **Gradle source dependencies**.
-No artifact publishing required — Gradle clones the repository and builds the
-`:securecheck` module directly from source, resolving versions via git tags.
+Android security library — runtime detection of rooted devices, attached
+debuggers, Frida / Xposed / Zygisk instrumentation, tampered APKs and
+un-official installers. One synchronous call returns a single `Boolean`;
+a companion call returns a per-check breakdown for logging.
 
-Published module coordinates: **`com.securelib:securecheck`**
-
----
-
-## Repository layout
-
-```
-SecureLib/
-├── app/           Sample application for developing and testing the library
-└── securecheck/   The library module consumers actually import
-```
+Distributed via **[JitPack](https://jitpack.io)**. Consumers don't need
+NDK, don't need GitHub credentials, don't need to build the library
+themselves — JitPack compiles the AAR (including native `.so` files for
+all four ABIs) on its side and serves the prebuilt artifact.
 
 ---
 
-## Consuming the library
+## Installation
 
-### 1. Grant git access
+### 1. Add the JitPack repository
 
-Every developer and every CI job that builds a consumer project must be able to
-`git clone` this repository. Use one of:
-
-- SSH key registered with the organization
-- HTTPS + a git credential helper storing a Personal Access Token
-
-Gradle uses the local git configuration transparently — no extra credentials
-are wired through Gradle itself.
-
-### 2. Declare the source dependency
-
-In the consumer project's **`settings.gradle.kts`**, add a `sourceControl`
-block at the top level (outside `dependencyResolutionManagement`):
+In your consumer project's **`settings.gradle.kts`**:
 
 ```kotlin
-sourceControl {
-    gitRepository(java.net.URI("git@github.com:<your-org>/SecureLib.git")) {
-        producesModule("com.securelib:securecheck")
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
     }
 }
 ```
 
-The `producesModule` string **must** match the `group:artifactId` published by
-the library module (see `securecheck/build.gradle.kts`).
+### 2. Add the dependency
 
-### 3. Depend on the module
-
-In any consumer module's **`build.gradle.kts`**:
+In your app module's **`build.gradle.kts`**:
 
 ```kotlin
 dependencies {
-    implementation("com.securelib:securecheck:0.2.0")
+    implementation("com.github.EIDevelop0:SecureLib:0.2.0")
 }
 ```
 
-Version strings resolve against **git tags** in this repository. Tags are
-matched by exact version, so `0.2.0` resolves the commit tagged `0.2.0`
-(or `v0.2.0` — Gradle strips the leading `v`).
+The version string matches a git tag in the repository. Available tags:
 
-### 4. First build
+- `0.1.0` — pure Kotlin baseline (no NDK involvement, ~30 KB)
+- `0.2.0` — adds native C++ backing for Frida / Debugger / Zygisk checks
+  and introduces the new `ZygiskCheck` (recommended)
 
-On the first build Gradle will:
+### 3. Sync
 
-1. Clone `SecureLib` into `~/.gradle/checkouts/`
-2. Check out the tag matching the requested version
-3. Build the `:securecheck` module
-4. Cache the produced artifacts
+```
+File → Sync Project with Gradle Files
+```
 
-Subsequent builds reuse the cache. To force a re-clone: delete
-`~/.gradle/checkouts/`.
+On first sync JitPack will build the tag on its side (usually 3–8 minutes
+for `0.2.0` because of the NDK step). Subsequent syncs pull the cached
+artifact instantly.
+
+**No NDK setup required on the consumer side.** JitPack ships the
+already-built `.so` files for `armeabi-v7a`, `arm64-v8a`, `x86`, `x86_64`
+inside the AAR. Your project's regular Android SDK is enough.
 
 ---
 
-## API
-
-### Minimum usage
+## Quick start
 
 ```kotlin
-val secureCheck = SecureCheck.Builder(context)
-    .expectedPackageName("com.example.myapp")
-    .build()
+import com.securelib.securecheck.SecureCheck
+import kotlinx.coroutines.launch
 
-// From any coroutine scope (viewModelScope, lifecycleScope, LaunchedEffect…):
+class MainActivity : ComponentActivity() {
+
+    private val secureCheck by lazy {
+        SecureCheck.Builder(this)
+            .expectedPackageName(BuildConfig.APPLICATION_ID)
+            .build()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { MyApp() }
+
+        lifecycleScope.launch {
+            if (!secureCheck.check()) {
+                showBlockingSecurityWarning()
+                finish()
+            }
+        }
+    }
+}
+```
+
+`check()` returns `true` only when **every** enabled check has passed.
+It is a `suspend` function because opt-in checks (Play Integrity) may
+perform network I/O.
+
+---
+
+## API reference
+
+### Building an instance
+
+```kotlin
+val secureCheck: SecureCheck = SecureCheck.Builder(context)
+    // ---- Required ----
+    .expectedPackageName("com.example.myapp")
+
+    // ---- Optional configuration of defaults ----
+    .allowedInstallers(                   // default: Play Store only
+        "com.android.vending",
+        "com.samsung.android.appstore",
+        "ru.vk.store",
+    )
+
+    // ---- Opt-in checks ----
+    .addSignatureValidator(
+        expectedSha256 = "3A:5F:1E:...:AB:CD",
+    )
+    .addPlayIntegrityValidator(
+        cloudProjectNumber = 1234567890L,
+        verifier = { token -> myBackend.verifyIntegrityToken(token) },
+    )
+
+    // ---- Disable individual defaults ----
+    // .disablePackageNameCheck()
+    // .disableDebugBuildCheck()
+    // .disableDebuggerCheck()
+    // .disableRootCheck()
+    // .disableFridaCheck()
+    // .disableZygiskCheck()
+    // .disableXposedCheck()
+    // .disableInstallerCheck()
+
+    .build()
+```
+
+The `Builder(context)` constructor grabs `context.applicationContext`
+internally — you can safely pass an `Activity` without leaking it.
+
+### Running the checks
+
+Two entry points, both `suspend`:
+
+```kotlin
 val ok: Boolean = secureCheck.check()
 ```
 
-`check()` returns `true` only when **every** enabled check passed.
-
-### Detailed result
+Returns `true` when every enabled check passed, `false` otherwise. Ignores
+which specific check failed.
 
 ```kotlin
 val result: SecurityCheckResult = secureCheck.checkDetailed()
-result.passed             // Boolean — same as check()
-result.checks             // List<CheckOutcome> — every check, in registration order
-result.failedChecks       // Convenience: only the failed ones
+result.passed            // Boolean — same as check()
+result.checks            // List<CheckOutcome> — every check, in registration order
+result.failedChecks      // List<CheckOutcome> — failures only, convenience
 
+// CheckOutcome shape:
 data class CheckOutcome(
-    val name: String,       // e.g. "RootCheck"
+    val name: String,      // e.g. "RootCheck", "SignatureCheck", …
     val passed: Boolean,
-    val error: String?,     // set when the check itself threw
+    val error: String?,    // set when the check itself threw an exception
 )
 ```
 
-Use `checkDetailed()` for diagnostics, logging, or when you need to react
-differently to different failures.
+Use `checkDetailed()` for logging, diagnostic screens, or when your
+mitigation depends on which check failed (e.g. show a store link if
+`InstallerCheck` failed vs. a "root not supported" screen if `RootCheck`
+failed).
+
+### Failure semantics
+
+- A check that returns `false` sets `passed = false` and leaves `error = null`.
+- A check that throws an exception is treated as failed (`passed = false`)
+  and its `throwable.message` lands in `error`.
+- The library never silently degrades security — if the native library
+  fails to load, the three native-backed checks each surface an
+  `UnsatisfiedLinkError` message in `error`.
 
 ---
 
 ## Checks
 
-### Default (active without configuration)
+### Default checks (active without configuration)
 
-| Check | What it detects | Disable |
+| Check | Detects | Disable |
 |---|---|---|
-| `PackageNameCheck` | Runtime package name differs from the one you baked in | `.disablePackageNameCheck()` |
-| `DebugBuildCheck` | `ApplicationInfo.FLAG_DEBUGGABLE` is set | `.disableDebugBuildCheck()` |
-| `DebuggerCheck` | JDWP debugger attached, or `TracerPid != 0` in `/proc/self/status` (catches Frida/gdb ptrace). Implemented in native C++ so `java.io.File` hooks do not defeat it. | `.disableDebuggerCheck()` |
-| `RootCheck` | `su` binaries in 10 known paths, 12 known root-manager packages installed, `Build.TAGS = test-keys` | `.disableRootCheck()` |
-| `FridaCheck` | `/proc/self/maps` contains `frida` / `gum-js-loop` / `gadget`. Native C++ implementation — harder to hook than Java-level file access. | `.disableFridaCheck()` |
-| `ZygiskCheck` | `/proc/self/maps` contains injected Zygisk / Riru libraries (`zygisk`, `libzygisk`, `riru`, `libriru`). Catches Magisk-based hiding frameworks that bypass file-path root detection. Native C++. | `.disableZygiskCheck()` |
-| `XposedCheck` | `XposedBridge` class loadable, `/system/framework/XposedBridge.jar` present, Xposed frames in a probe stack trace (catches LSPosed) | `.disableXposedCheck()` |
-| `InstallerCheck` | App was not installed from an allowed installer package (default: Play Store only) | `.disableInstallerCheck()` |
+| `PackageNameCheck` | Runtime package name differs from your baked-in value — catches simple re-packagers who renamed the APK. | `.disablePackageNameCheck()` |
+| `DebugBuildCheck` | `ApplicationInfo.FLAG_DEBUGGABLE` is set — catches accidental shipping of a debug build to production. | `.disableDebugBuildCheck()` |
+| `DebuggerCheck` | Either a JDWP debugger is attached (Android Studio Debug, IntelliJ) or a native ptrace-based tracer (Frida server, gdb, strace) is present. Combines Java `Debug.isDebuggerConnected()` with native `TracerPid` reading — neither alone catches both threats. | `.disableDebuggerCheck()` |
+| `RootCheck` | 10 known `su` binary paths, 12 known root-manager packages (`com.topjohnwu.magisk`, `eu.chainfire.supersu`, …), `Build.TAGS = "test-keys"`. | `.disableRootCheck()` |
+| `FridaCheck` | `/proc/self/maps` contains `frida` / `gum-js-loop` / `gadget`. Native C++ implementation — harder to hook than Java-level `File.readLines`. | `.disableFridaCheck()` |
+| `ZygiskCheck` | `/proc/self/maps` contains injected Zygisk / Riru libraries. Catches Magisk-based hiding frameworks that bypass file-path root detection. Native C++. | `.disableZygiskCheck()` |
+| `XposedCheck` | `de.robv.android.xposed.XposedBridge` class loadable, `/system/framework/XposedBridge.jar` file present, Xposed frames in a probe stack trace (catches LSPosed even when the class is hidden). | `.disableXposedCheck()` |
+| `InstallerCheck` | App's installing package (via `PackageManager.getInstallSourceInfo`) is not in the allowed set. Default: `com.android.vending` only. Configurable via `.allowedInstallers(...)`. | `.disableInstallerCheck()` |
 
-**Required configuration:**
+### Opt-in checks
 
-- `.expectedPackageName("com.example.myapp")` — mandatory unless
-  `PackageNameCheck` is explicitly disabled. `build()` throws
-  `IllegalStateException` otherwise.
+Neither runs unless you call the corresponding `addXxx` method on the builder.
 
-**Optional configuration:**
+#### `addSignatureValidator(expectedSha256)`
 
-- `.allowedInstallers(vararg String)` — override the installer whitelist.
-  Example for multi-store distribution:
-  ```kotlin
-  .allowedInstallers("com.android.vending", "com.samsung.android.appstore", "ru.vk.store")
-  ```
-
-### Opt-in
-
-Neither is active unless you call the corresponding `addXxx` method.
-
-#### `addSignatureValidator(expectedSha256: String)`
-
-Compares the SHA-256 of the running APK's signing certificate against a
-hard-coded expected value. Detects APK repackaging.
+Compares SHA-256 of the APK's signing certificate against an expected
+value hardcoded in your app. Detects repackaging even when the attacker
+kept the package name.
 
 ```kotlin
 .addSignatureValidator(
-    expectedSha256 = "3A:5F:1E:...:AB:CD",  // colons / dashes / spaces / case are all tolerated
+    expectedSha256 = "3A:5F:1E:B2:CC:DA:...",
 )
 ```
 
-**Getting the expected hash for your release keystore:**
+Colons, dashes, spaces and case are all normalised — pass whatever
+`keytool` gave you.
+
+**How to get the expected hash for your keystore:**
 
 ```bash
 keytool -list -v -keystore my-release-key.jks -alias my-alias | grep SHA256
 ```
 
-Ship the hash as a string in your code — do **not** read it from a resource
-file, since a repackager will simply update the resource.
+For the debug keystore Android Studio uses by default:
+
+```bash
+keytool -list -v \
+  -keystore ~/.android/debug.keystore \
+  -alias androiddebugkey \
+  -storepass android \
+  -keypass android | grep SHA256
+```
+
+Ship the hash as a Kotlin string constant — **do not read it from a
+resource** (attackers patching the APK will also patch the resource).
 
 #### `addPlayIntegrityValidator(cloudProjectNumber, verifier)`
 
-Requests a Play Integrity token from Google, then hands it to a `verifier`
-lambda you supply. The check passes only if `verifier` returns `true`.
+Requests a Google Play Integrity token, then delegates the verdict to a
+`verifier` lambda you provide.
 
 ```kotlin
 .addPlayIntegrityValidator(
     cloudProjectNumber = 1234567890L,
     verifier = { token ->
-        // Send the token to YOUR backend, which decrypts and inspects it.
-        // Return whether the device/app is trusted.
-        myApi.verifyIntegrityToken(token)
+        // Send the token to YOUR backend for decryption and verdict inspection.
+        myBackend.verifyIntegrityToken(token)
     },
 )
 ```
 
-**Why is `verifier` mandatory?**
+**Why the verifier is mandatory:** the Play Integrity response is
+encrypted with a key held by your GCP service account. Only your backend
+can decrypt it and read the verdicts (`deviceIntegrity.deviceRecognitionVerdict`,
+`appIntegrity.appRecognitionVerdict`, `accountDetails.appLicensingVerdict`).
+Any client-side interpretation is trivially defeated by an on-device MITM
+substituting a fake response. The library refuses to guess.
 
-The Play Integrity response is encrypted with a key held by your GCP service
-account. Only your backend can decrypt it. Any "client-side" interpretation
-of the token is trivially bypassed by an attacker on a compromised device
-who MITMs the response back into your app. The library therefore refuses to
-guess a verdict — you decide how to trust the token.
-
-If you accept the risk of client-side interpretation (e.g. for a pre-launch
-prototype), your `verifier` can decode the JWT payload itself:
+If you accept the risk for a prototype and want an inline verifier:
 
 ```kotlin
 verifier = { token ->
@@ -198,63 +262,194 @@ verifier = { token ->
 }
 ```
 
-**Play Integrity requirements:**
+**Requirements:**
+- Google Play Services 22+ on the device
+- App linked to a GCP project (Cloud Console → project number)
+- Device must have Google Play Store — the check fails on Huawei-only
+  devices, most emulators, and de-Googled ROMs. That is by design.
 
-- Google Play Services 22+ installed on the device
-- App linked to a Google Cloud project (get the project number from the
-  Google Cloud Console)
-- Device must have Google Play Store — the check will fail on
-  Huawei-only devices, most emulators, and de-Googled ROMs
+---
+
+## Recipes
+
+### Fail-fast at app start
+
+```kotlin
+class MyApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        val secureCheck = SecureCheck.Builder(this)
+            .expectedPackageName(BuildConfig.APPLICATION_ID)
+            .addSignatureValidator(expectedSha256 = BuildConfig.RELEASE_SIGNATURE_SHA256)
+            .build()
+
+        // Fire-and-forget: don't block onCreate, but bring down the app
+        // early if the environment is compromised.
+        GlobalScope.launch(Dispatchers.Default) {
+            if (!secureCheck.check()) {
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
+    }
+}
+```
+
+### Reactive UI with diagnostic breakdown
+
+```kotlin
+@Composable
+fun SecurityGate(content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val secureCheck = remember {
+        SecureCheck.Builder(context)
+            .expectedPackageName(BuildConfig.APPLICATION_ID)
+            .build()
+    }
+    var result by remember { mutableStateOf<SecurityCheckResult?>(null) }
+
+    LaunchedEffect(Unit) { result = secureCheck.checkDetailed() }
+
+    when (val snapshot = result) {
+        null -> LoadingScreen()
+        else -> if (snapshot.passed) {
+            content()
+        } else {
+            BlockedScreen(
+                reasons = snapshot.failedChecks.map { it.name },
+            )
+        }
+    }
+}
+```
+
+### Different behavior per check
+
+```kotlin
+val result = secureCheck.checkDetailed()
+if (result.passed) return
+
+result.failedChecks.forEach { outcome ->
+    when (outcome.name) {
+        "InstallerCheck"   -> promptOpenPlayStore()
+        "RootCheck"        -> warnRootedDevice()
+        "SignatureCheck"   -> hardBlock("Tampered APK")
+        "PlayIntegrityCheck" -> logToTelemetry("integrity failure", outcome.error)
+        else               -> logToTelemetry("security failure: ${outcome.name}", outcome.error)
+    }
+}
+```
+
+### Debug builds — relaxed policy
+
+Some checks legitimately fail during development (`DebuggerCheck` when
+running under Android Studio Debug, `InstallerCheck` when `adb install`
+sets the installer to `null`). Turn them off in debug:
+
+```kotlin
+SecureCheck.Builder(context)
+    .expectedPackageName(BuildConfig.APPLICATION_ID)
+    .apply {
+        if (BuildConfig.DEBUG) {
+            disableDebuggerCheck()
+            disableInstallerCheck()
+            disableDebugBuildCheck()
+        }
+    }
+    .build()
+```
+
+Or gate the whole `secureCheck.check()` call behind `!BuildConfig.DEBUG`.
+
+### Multi-store distribution
+
+```kotlin
+.allowedInstallers(
+    "com.android.vending",          // Google Play Store
+    "com.samsung.android.appstore", // Samsung Galaxy Store
+    "com.huawei.appmarket",         // Huawei AppGallery
+    "ru.vk.store",                  // RuStore
+    "com.amazon.venezia",           // Amazon Appstore
+)
+```
+
+---
+
+## Requirements
+
+- **Consumer `minSdk`**: 26 (Android 8.0)
+- **`compileSdk`**: 33+ recommended
+- **Kotlin**: 1.9+ (uses stdlib `suspend`)
+- **Android Gradle Plugin**: 7.4+
+- **Play Integrity check only**: device with Google Play Services
+
+No NDK required on the consumer side — JitPack builds and packages the
+native components.
 
 ---
 
 ## Caveats
 
-- **`DebuggerCheck` fails when you run under Android Studio's debugger.** Use
-  *Run* rather than *Debug*, or temporarily add `.disableDebuggerCheck()`
-  while iterating.
-- **Root / Frida / Xposed detectors are heuristic.** Determined attackers
-  running Magisk Hide, Zygisk, LSPosed with hooks on `File.exists`, or
-  patched Frida gadgets will bypass individual checks. The library gives you
-  defense in depth, not perfect coverage. Combine with server-side signals.
-- **Play Integrity is only meaningful with backend verification.** A device
-  with a fake response injected client-side will otherwise pass every check.
-- **`InstallerCheck` fails during local development** (installed via `adb`,
-  which sets installer package name to `null`). Disable it in debug builds
-  or run from Play Console internal testing.
-- **First-build latency for consumers**: source dependencies clone + build
-  once per version. Subsequent builds hit the cache.
-- **NDK is required to build.** The library ships a small native component
-  (`libsecurecheck.so`) used by `FridaCheck`, `DebuggerCheck`, and
-  `ZygiskCheck`. First-time consumers will see Gradle download the Android
-  NDK on their machine (one-time, ~1 GB). All four ABIs are built:
-  `armeabi-v7a`, `arm64-v8a`, `x86`, `x86_64`. If the native library
-  fails to load at runtime, the three native-backed checks each surface
-  `UnsatisfiedLinkError` through `CheckOutcome.error` — no silent
-  degradation of security posture.
+- **`DebuggerCheck` fails when running under Android Studio's *Debug*
+  configuration.** Use *Run* (Shift+F10), or add `.disableDebuggerCheck()`
+  under `if (BuildConfig.DEBUG)`.
+- **`InstallerCheck` fails during local development** (installed via
+  `adb`, which sets installer to `null`). Disable in debug builds or
+  install via Play Console Internal Testing.
+- **Root / Frida / Xposed / Zygisk detectors are heuristic.** Determined
+  attackers running Magisk with Shamiko, LSPosed with hooked `File.exists`,
+  or patched Frida gadgets will bypass individual checks. The library
+  gives defense in depth, not perfect coverage. Combine with server-side
+  signals (Play Integrity forwarded to your backend, behavioural analytics).
+- **Play Integrity is only meaningful with backend verification.** A
+  compromised device can inject a fake success response; only your backend
+  reading Google's decrypted verdict is trustworthy.
+- **Some verdicts are one-shot per launch.** `check()` re-runs everything
+  each call, but system state (rooted / not) doesn't usually change
+  mid-session. Cache the result at the app level if you invoke it often.
+- **First JitPack build for a fresh tag takes 3–10 minutes** on JitPack's
+  side. If a developer syncs a brand-new version right after your `git
+  tag`, they'll see JitPack building in the sync log. Subsequent syncs
+  pull from JitPack's cache instantly.
 
 ---
 
-## Releasing a new version
+## Releasing a new version (maintainer notes)
 
-1. Bump `version` in `securecheck/build.gradle.kts`
-2. Commit
-3. Tag the commit: `git tag 0.2.0 && git push origin 0.2.0`
+1. Bump `version` in `securecheck/build.gradle.kts` (e.g. `0.2.0` → `0.3.0`)
+2. Update this README's `implementation("com.github.EIDevelop0:SecureLib:X.Y.Z")` line
+3. Commit and push
+4. Tag the commit: `git tag 0.3.0 && git push origin 0.3.0`
+5. (Optional) Open the tag in JitPack (`https://jitpack.io/com/github/EIDevelop0/SecureLib/0.3.0/`)
+   to pre-warm the build — otherwise the first consumer to request that
+   version will trigger it (and wait a few minutes)
 
-Consumers then update the version string in their `implementation(...)` line.
+Consumers then update the version string. No republishing action needed
+from the maintainer's side beyond pushing the tag.
 
 ---
 
 ## Developing the library
 
-Open the whole `SecureLib` project in Android Studio. The `:app` module already
-depends on `:securecheck` via `project(":securecheck")`, so any change to the
-library is immediately visible in the sample app — no republishing needed.
+Open the whole `SecureLib` project in Android Studio. The `:app` module
+depends on `:securecheck` via `project(":securecheck")`, so any change
+to the library is immediately visible in the sample app — no publishing
+required for local iteration.
 
 ```
-./gradlew :securecheck:assembleRelease   # build the library standalone
-./gradlew :app:installDebug              # run the sample app
-./gradlew :securecheck:publishToMavenLocal   # smoke-test the maven coordinates
+./gradlew :securecheck:assembleRelease       # build the AAR standalone
+./gradlew :app:installDebug                  # run the sample app on a connected device
+./gradlew :securecheck:publishToMavenLocal   # smoke-test Maven coordinates locally
+```
+
+Repository layout:
+
+```
+SecureLib/
+├── app/           Sample application for developing and testing the library
+└── securecheck/   The library module consumers actually import
+    ├── src/main/cpp/       Native C++ sources (Frida / Debugger / Zygisk probes)
+    ├── src/main/java/      Kotlin API, check implementations, Builder
+    └── build.gradle.kts    CMake wiring, ABIs, maven-publish config
 ```
 
 ---
@@ -264,6 +459,14 @@ library is immediately visible in the sample app — no republishing needed.
 Native detection techniques for Frida, debugger, and Zygisk (in
 `securecheck/src/main/cpp/`) are inspired by
 [NativeShield](https://github.com/PhuongDoZz/NativeShield) by PhuongDoZz
-(MIT © 2025). Implementations here are original and adapted to this
-library's on-demand `check(): Boolean` API rather than the continuous
-background-thread model used by NativeShield.
+(MIT © 2025). Implementations here are original and rewritten around
+this library's on-demand `check(): Boolean` API rather than
+NativeShield's continuous background-thread logging model.
+
+---
+
+## License
+
+TBD — decide before public release. If you plan to distribute this to
+consumers outside your organization, add an explicit `LICENSE` file at
+the repository root.
