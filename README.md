@@ -122,7 +122,6 @@ val secureCheck: SecureCheck = SecureCheck.Builder(context)
     .allowedInstallers(                   // за замовч.: лише Play Store
         "com.android.vending",
         "com.samsung.android.appstore",
-        "ru.vk.store",
     )
 
     // ---- Opt-in перевірки ----
@@ -389,7 +388,6 @@ SecureCheck.Builder(context)
     "com.android.vending",          // Google Play Store
     "com.samsung.android.appstore", // Samsung Galaxy Store
     "com.huawei.appmarket",         // Huawei AppGallery
-    "ru.vk.store",                  // RuStore
     "com.amazon.venezia",           // Amazon Appstore
 )
 ```
