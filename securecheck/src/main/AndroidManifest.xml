@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Package visibility (API 30+): the library queries PackageManager for
+      known root-manager apps. Without this <queries> block getPackageInfo()
+      would raise NameNotFoundException even when the package is present.
+      Keep the list in sync with RootCheck.ROOT_PACKAGES.
+    -->
+    <queries>
+        <package android:name="com.topjohnwu.magisk" />
+        <package android:name="com.noshufou.android.su" />
+        <package android:name="com.noshufou.android.su.elite" />
+        <package android:name="eu.chainfire.supersu" />
+        <package android:name="com.koushikdutta.superuser" />
+        <package android:name="com.thirdparty.superuser" />
+        <package android:name="com.yellowes.su" />
+        <package android:name="com.kingroot.kinguser" />
+        <package android:name="com.kingo.root" />
+        <package android:name="com.smedialink.oneclickroot" />
+        <package android:name="com.zhiqupk.root.global" />
+        <package android:name="com.alephzain.framaroot" />
+    </queries>
+
+</manifest>
