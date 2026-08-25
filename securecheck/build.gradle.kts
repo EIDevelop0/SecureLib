@@ -12,7 +12,7 @@ plugins {
 //   }
 // The (group, artifactId) below MUST match that producesModule string.
 group = "com.securelib"
-version = "0.1.0"
+version = "0.2.0"
 
 android {
     namespace = "com.securelib.securecheck"
@@ -25,6 +25,22 @@ android {
     defaultConfig {
         minSdk = 26
         consumerProguardFiles("consumer-rules.pro")
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {

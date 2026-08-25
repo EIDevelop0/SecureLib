@@ -53,13 +53,13 @@ In any consumer module's **`build.gradle.kts`**:
 
 ```kotlin
 dependencies {
-    implementation("com.securelib:securecheck:0.1.0")
+    implementation("com.securelib:securecheck:0.2.0")
 }
 ```
 
 Version strings resolve against **git tags** in this repository. Tags are
-matched by exact version, so `0.1.0` resolves the commit tagged `0.1.0`
-(or `v0.1.0` — Gradle strips the leading `v`).
+matched by exact version, so `0.2.0` resolves the commit tagged `0.2.0`
+(or `v0.2.0` — Gradle strips the leading `v`).
 
 ### 4. First build
 
@@ -118,9 +118,10 @@ differently to different failures.
 |---|---|---|
 | `PackageNameCheck` | Runtime package name differs from the one you baked in | `.disablePackageNameCheck()` |
 | `DebugBuildCheck` | `ApplicationInfo.FLAG_DEBUGGABLE` is set | `.disableDebugBuildCheck()` |
-| `DebuggerCheck` | JDWP debugger attached, or `TracerPid != 0` in `/proc/self/status` (catches Frida/gdb ptrace) | `.disableDebuggerCheck()` |
+| `DebuggerCheck` | JDWP debugger attached, or `TracerPid != 0` in `/proc/self/status` (catches Frida/gdb ptrace). Implemented in native C++ so `java.io.File` hooks do not defeat it. | `.disableDebuggerCheck()` |
 | `RootCheck` | `su` binaries in 10 known paths, 12 known root-manager packages installed, `Build.TAGS = test-keys` | `.disableRootCheck()` |
-| `FridaCheck` | `/proc/self/maps` contains `frida` / `gum-js-loop` / `gadget` | `.disableFridaCheck()` |
+| `FridaCheck` | `/proc/self/maps` contains `frida` / `gum-js-loop` / `gadget`. Native C++ implementation — harder to hook than Java-level file access. | `.disableFridaCheck()` |
+| `ZygiskCheck` | `/proc/self/maps` contains injected Zygisk / Riru libraries (`zygisk`, `libzygisk`, `riru`, `libriru`). Catches Magisk-based hiding frameworks that bypass file-path root detection. Native C++. | `.disableZygiskCheck()` |
 | `XposedCheck` | `XposedBridge` class loadable, `/system/framework/XposedBridge.jar` present, Xposed frames in a probe stack trace (catches LSPosed) | `.disableXposedCheck()` |
 | `InstallerCheck` | App was not installed from an allowed installer package (default: Play Store only) | `.disableInstallerCheck()` |
 
@@ -223,6 +224,14 @@ verifier = { token ->
   or run from Play Console internal testing.
 - **First-build latency for consumers**: source dependencies clone + build
   once per version. Subsequent builds hit the cache.
+- **NDK is required to build.** The library ships a small native component
+  (`libsecurecheck.so`) used by `FridaCheck`, `DebuggerCheck`, and
+  `ZygiskCheck`. First-time consumers will see Gradle download the Android
+  NDK on their machine (one-time, ~1 GB). All four ABIs are built:
+  `armeabi-v7a`, `arm64-v8a`, `x86`, `x86_64`. If the native library
+  fails to load at runtime, the three native-backed checks each surface
+  `UnsatisfiedLinkError` through `CheckOutcome.error` — no silent
+  degradation of security posture.
 
 ---
 
@@ -247,3 +256,14 @@ library is immediately visible in the sample app — no republishing needed.
 ./gradlew :app:installDebug              # run the sample app
 ./gradlew :securecheck:publishToMavenLocal   # smoke-test the maven coordinates
 ```
+
+---
+
+## Credits
+
+Native detection techniques for Frida, debugger, and Zygisk (in
+`securecheck/src/main/cpp/`) are inspired by
+[NativeShield](https://github.com/PhuongDoZz/NativeShield) by PhuongDoZz
+(MIT © 2025). Implementations here are original and adapted to this
+library's on-demand `check(): Boolean` API rather than the continuous
+background-thread model used by NativeShield.

@@ -2,9 +2,9 @@ package com.securelib.securecheck
 
 import android.content.Context
 import com.securelib.securecheck.check.DebugBuildCheck
-import com.securelib.securecheck.check.DebuggerCheck
-import com.securelib.securecheck.check.FridaCheck
 import com.securelib.securecheck.check.InstallerCheck
+import com.securelib.securecheck.check.NativeDebuggerCheck
+import com.securelib.securecheck.check.NativeFridaCheck
 import com.securelib.securecheck.check.PackageNameCheck
 import com.securelib.securecheck.check.PlayIntegrityCheck
 import com.securelib.securecheck.check.PlayIntegrityVerifier
@@ -12,6 +12,7 @@ import com.securelib.securecheck.check.RootCheck
 import com.securelib.securecheck.check.SecurityCheck
 import com.securelib.securecheck.check.SignatureCheck
 import com.securelib.securecheck.check.XposedCheck
+import com.securelib.securecheck.check.ZygiskCheck
 
 class SecureCheck internal constructor(
     private val checks: List<SecurityCheck>,
@@ -65,11 +66,13 @@ class SecureCheck internal constructor(
 
         fun disableDebugBuildCheck() = apply { disabledDefaults.add(DebugBuildCheck.NAME) }
 
-        fun disableDebuggerCheck() = apply { disabledDefaults.add(DebuggerCheck.NAME) }
+        fun disableDebuggerCheck() = apply { disabledDefaults.add(NativeDebuggerCheck.NAME) }
 
         fun disableRootCheck() = apply { disabledDefaults.add(RootCheck.NAME) }
 
-        fun disableFridaCheck() = apply { disabledDefaults.add(FridaCheck.NAME) }
+        fun disableFridaCheck() = apply { disabledDefaults.add(NativeFridaCheck.NAME) }
+
+        fun disableZygiskCheck() = apply { disabledDefaults.add(ZygiskCheck.NAME) }
 
         fun disableXposedCheck() = apply { disabledDefaults.add(XposedCheck.NAME) }
 
@@ -108,14 +111,17 @@ class SecureCheck internal constructor(
             if (DebugBuildCheck.NAME !in disabledDefaults) {
                 checks += DebugBuildCheck(appContext)
             }
-            if (DebuggerCheck.NAME !in disabledDefaults) {
-                checks += DebuggerCheck()
+            if (NativeDebuggerCheck.NAME !in disabledDefaults) {
+                checks += NativeDebuggerCheck()
             }
             if (RootCheck.NAME !in disabledDefaults) {
                 checks += RootCheck(appContext)
             }
-            if (FridaCheck.NAME !in disabledDefaults) {
-                checks += FridaCheck()
+            if (NativeFridaCheck.NAME !in disabledDefaults) {
+                checks += NativeFridaCheck()
+            }
+            if (ZygiskCheck.NAME !in disabledDefaults) {
+                checks += ZygiskCheck()
             }
             if (XposedCheck.NAME !in disabledDefaults) {
                 checks += XposedCheck()

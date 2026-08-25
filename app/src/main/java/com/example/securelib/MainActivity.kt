@@ -35,6 +35,8 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        val ss = "SDS"
     }
 }
 
@@ -46,9 +48,9 @@ private fun SecurityStatus(modifier: Modifier = Modifier) {
             .expectedPackageName("com.example.securelib")
             // Opt-in checks — uncomment and configure to see them in action:
             //
-            // .addSignatureValidator(
-            //     expectedSha256 = "AB:CD:EF:...",
-            // )
+             .addSignatureValidator(
+                 expectedSha256 = "dc7f9e72c0857808421bd7a97a051c9dae03b651c53f9f4e9ce42f4807d37ec2",
+             )
             //
             // .addPlayIntegrityValidator(
             //     cloudProjectNumber = 1234567890L,
