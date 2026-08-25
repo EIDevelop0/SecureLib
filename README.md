@@ -1,22 +1,41 @@
 # SecureLib
 
-Android security library — runtime detection of rooted devices, attached
-debuggers, Frida / Xposed / Zygisk instrumentation, tampered APKs and
-un-official installers. One synchronous call returns a single `Boolean`;
-a companion call returns a per-check breakdown for logging.
+Android-бібліотека безпеки — виявлення в рантаймі рутованих пристроїв,
+приєднаних налагоджувачів, інструментації Frida / Xposed / Zygisk,
+підмінених APK та встановлень з неофіційних джерел. Один synchronous
+виклик повертає єдиний `Boolean`; додатковий виклик повертає розбивку
+по кожній перевірці для логування.
 
-Distributed via **[JitPack](https://jitpack.io)**. Consumers don't need
-NDK, don't need GitHub credentials, don't need to build the library
-themselves — JitPack compiles the AAR (including native `.so` files for
-all four ABIs) on its side and serves the prebuilt artifact.
+Поширюється через **[JitPack](https://jitpack.io)**. Споживачам не
+потрібен NDK, не потрібні GitHub-креденшіали, не потрібно збирати
+бібліотеку самостійно — JitPack компілює AAR (включно з нативними
+`.so` для всіх ABI, якщо вони є у версії) на своєму боці й віддає
+готовий артефакт.
 
 ---
 
-## Installation
+## Вибір версії
 
-### 1. Add the JitPack repository
+| Версія | Тип | Перевірки | Розмір | Вимоги |
+|---|---|---|---|---|
+| **`0.1.0`** | Чистий Kotlin | 7 базових | ~30 KB | лише Android SDK |
+| **`0.2.0`** | Kotlin + native C++ | 8 базових (додано `ZygiskCheck`, а `FridaCheck` і `DebuggerCheck` мають нативний бекенд для стійкості до Java-хуків) | ~3 MB (4 ABI × ~800 KB) | NDK збирає JitPack — споживачу не треба |
 
-In your consumer project's **`settings.gradle.kts`**:
+**Що обрати:**
+- Якщо ви робите звичайний застосунок і хочете базову захист — беріть **`0.1.0`**. Мінімальний оверхед, простіше життя.
+- Якщо у застосунку є щось цінне (банкінг, платежі, крипта, DRM-контент, розмежування прав) — беріть **`0.2.0`**. Нативні перевірки суттєво важче обійти через LSPosed/Frida hooks на Java-API.
+
+Обидві версії мають **однаковий публічний API** — переключення між ними
+це просто зміна рядка версії в `implementation(...)`. Опис нижче
+позначає різниці явно.
+
+---
+
+## Встановлення
+
+### 1. Додати репозиторій JitPack
+
+У `settings.gradle.kts` проєкту-споживача:
 
 ```kotlin
 dependencyResolutionManagement {
@@ -29,21 +48,17 @@ dependencyResolutionManagement {
 }
 ```
 
-### 2. Add the dependency
+### 2. Додати залежність
 
-In your app module's **`build.gradle.kts`**:
+У `build.gradle.kts` модуля-споживача (зазвичай `app`):
 
 ```kotlin
 dependencies {
-    implementation("com.github.EIDevelop0:SecureLib:0.2.0")
+    // Оберіть одну версію:
+    implementation("com.github.EIDevelop0:SecureLib:0.1.0")   // Kotlin-only
+    // implementation("com.github.EIDevelop0:SecureLib:0.2.0") // Kotlin + native C++
 }
 ```
-
-The version string matches a git tag in the repository. Available tags:
-
-- `0.1.0` — pure Kotlin baseline (no NDK involvement, ~30 KB)
-- `0.2.0` — adds native C++ backing for Frida / Debugger / Zygisk checks
-  and introduces the new `ZygiskCheck` (recommended)
 
 ### 3. Sync
 
@@ -51,17 +66,16 @@ The version string matches a git tag in the repository. Available tags:
 File → Sync Project with Gradle Files
 ```
 
-On first sync JitPack will build the tag on its side (usually 3–8 minutes
-for `0.2.0` because of the NDK step). Subsequent syncs pull the cached
-artifact instantly.
+При першому синку JitPack збере тег на своєму боці (зазвичай 2–5 хв
+для `0.1.0`, 3–8 хв для `0.2.0` через NDK-крок). Подальші синки
+підтягуватимуть закешований артефакт миттєво.
 
-**No NDK setup required on the consumer side.** JitPack ships the
-already-built `.so` files for `armeabi-v7a`, `arm64-v8a`, `x86`, `x86_64`
-inside the AAR. Your project's regular Android SDK is enough.
+**NDK на боці споживача не потрібен.** JitPack віддає готові `.so`
+всередині AAR. Стандартного Android SDK у вашому проєкті достатньо.
 
 ---
 
-## Quick start
+## Швидкий старт
 
 ```kotlin
 import com.securelib.securecheck.SecureCheck
@@ -89,29 +103,29 @@ class MainActivity : ComponentActivity() {
 }
 ```
 
-`check()` returns `true` only when **every** enabled check has passed.
-It is a `suspend` function because opt-in checks (Play Integrity) may
-perform network I/O.
+`check()` — це `suspend` функція, тому що opt-in перевірки (Play
+Integrity) можуть виконувати мережевий I/O. Викликати треба з будь-якого
+coroutine scope: `lifecycleScope`, `viewModelScope`, `LaunchedEffect`.
 
 ---
 
-## API reference
+## API
 
-### Building an instance
+### Побудова інстансу
 
 ```kotlin
 val secureCheck: SecureCheck = SecureCheck.Builder(context)
-    // ---- Required ----
+    // ---- Обов'язково ----
     .expectedPackageName("com.example.myapp")
 
-    // ---- Optional configuration of defaults ----
-    .allowedInstallers(                   // default: Play Store only
+    // ---- Опціональна конфігурація дефолтних перевірок ----
+    .allowedInstallers(                   // за замовч.: лише Play Store
         "com.android.vending",
         "com.samsung.android.appstore",
         "ru.vk.store",
     )
 
-    // ---- Opt-in checks ----
+    // ---- Opt-in перевірки ----
     .addSignatureValidator(
         expectedSha256 = "3A:5F:1E:...:AB:CD",
     )
@@ -120,87 +134,93 @@ val secureCheck: SecureCheck = SecureCheck.Builder(context)
         verifier = { token -> myBackend.verifyIntegrityToken(token) },
     )
 
-    // ---- Disable individual defaults ----
+    // ---- Вимкнення окремих дефолтних перевірок ----
     // .disablePackageNameCheck()
     // .disableDebugBuildCheck()
     // .disableDebuggerCheck()
     // .disableRootCheck()
     // .disableFridaCheck()
-    // .disableZygiskCheck()
+    // .disableZygiskCheck()   // тільки 0.2.0+
     // .disableXposedCheck()
     // .disableInstallerCheck()
 
     .build()
 ```
 
-The `Builder(context)` constructor grabs `context.applicationContext`
-internally — you can safely pass an `Activity` without leaking it.
+`Builder(context)` всередині бере `context.applicationContext` — можна
+передавати `Activity` без ризику витоку.
 
-### Running the checks
+### Запуск перевірок
 
-Two entry points, both `suspend`:
+Два методи, обидва `suspend`:
 
 ```kotlin
 val ok: Boolean = secureCheck.check()
 ```
-
-Returns `true` when every enabled check passed, `false` otherwise. Ignores
-which specific check failed.
+Повертає `true`, коли всі активні перевірки пройшли. Ігнорує деталі
+провалу.
 
 ```kotlin
 val result: SecurityCheckResult = secureCheck.checkDetailed()
-result.passed            // Boolean — same as check()
-result.checks            // List<CheckOutcome> — every check, in registration order
-result.failedChecks      // List<CheckOutcome> — failures only, convenience
+result.passed            // Boolean — те саме, що й check()
+result.checks            // List<CheckOutcome> — усі перевірки в порядку реєстрації
+result.failedChecks      // List<CheckOutcome> — лише провалені, для зручності
 
-// CheckOutcome shape:
 data class CheckOutcome(
-    val name: String,      // e.g. "RootCheck", "SignatureCheck", …
+    val name: String,      // "RootCheck", "SignatureCheck", ...
     val passed: Boolean,
-    val error: String?,    // set when the check itself threw an exception
+    val error: String?,    // заповнене, якщо перевірка кинула виняток
 )
 ```
 
-Use `checkDetailed()` for logging, diagnostic screens, or when your
-mitigation depends on which check failed (e.g. show a store link if
-`InstallerCheck` failed vs. a "root not supported" screen if `RootCheck`
-failed).
+Використовуйте `checkDetailed()` для логування, діагностичних екранів
+або коли реакція залежить від конкретної провалу (напр. посилання на
+стор — при провалі `InstallerCheck`, а екран "рутовані не підтримуються"
+— при провалі `RootCheck`).
 
-### Failure semantics
+### Семантика провалів
 
-- A check that returns `false` sets `passed = false` and leaves `error = null`.
-- A check that throws an exception is treated as failed (`passed = false`)
-  and its `throwable.message` lands in `error`.
-- The library never silently degrades security — if the native library
-  fails to load, the three native-backed checks each surface an
-  `UnsatisfiedLinkError` message in `error`.
+- Перевірка, що повернула `false` → `passed = false`, `error = null`.
+- Перевірка, що кинула виняток → трактується як провалена, і
+  `throwable.message` потрапляє в `error`.
+- Бібліотека ніколи не деградує безпеку тихо — якщо нативна бібліотека
+  (у `0.2.0`) не вантажиться, три нативні перевірки віддадуть
+  `UnsatisfiedLinkError` через `CheckOutcome.error`.
 
 ---
 
-## Checks
+## Перевірки
 
-### Default checks (active without configuration)
+### Дефолтні (активні без конфігурації)
 
-| Check | Detects | Disable |
-|---|---|---|
-| `PackageNameCheck` | Runtime package name differs from your baked-in value — catches simple re-packagers who renamed the APK. | `.disablePackageNameCheck()` |
-| `DebugBuildCheck` | `ApplicationInfo.FLAG_DEBUGGABLE` is set — catches accidental shipping of a debug build to production. | `.disableDebugBuildCheck()` |
-| `DebuggerCheck` | Either a JDWP debugger is attached (Android Studio Debug, IntelliJ) or a native ptrace-based tracer (Frida server, gdb, strace) is present. Combines Java `Debug.isDebuggerConnected()` with native `TracerPid` reading — neither alone catches both threats. | `.disableDebuggerCheck()` |
-| `RootCheck` | 10 known `su` binary paths, 12 known root-manager packages (`com.topjohnwu.magisk`, `eu.chainfire.supersu`, …), `Build.TAGS = "test-keys"`. | `.disableRootCheck()` |
-| `FridaCheck` | `/proc/self/maps` contains `frida` / `gum-js-loop` / `gadget`. Native C++ implementation — harder to hook than Java-level `File.readLines`. | `.disableFridaCheck()` |
-| `ZygiskCheck` | `/proc/self/maps` contains injected Zygisk / Riru libraries. Catches Magisk-based hiding frameworks that bypass file-path root detection. Native C++. | `.disableZygiskCheck()` |
-| `XposedCheck` | `de.robv.android.xposed.XposedBridge` class loadable, `/system/framework/XposedBridge.jar` file present, Xposed frames in a probe stack trace (catches LSPosed even when the class is hidden). | `.disableXposedCheck()` |
-| `InstallerCheck` | App's installing package (via `PackageManager.getInstallSourceInfo`) is not in the allowed set. Default: `com.android.vending` only. Configurable via `.allowedInstallers(...)`. | `.disableInstallerCheck()` |
+Позначки: 🅺 = чистий Kotlin, 🇨 = нативний C++ бекенд, ✨ = додано у версії.
 
-### Opt-in checks
+| Перевірка | Реалізація | Що виявляє | Вимкнути |
+|---|---|---|---|
+| `PackageNameCheck` | 🅺 | Ім'я пакета в рантаймі відрізняється від зашитого — ловить простих repackager'ів, які перейменували APK. | `.disablePackageNameCheck()` |
+| `DebugBuildCheck` | 🅺 | Встановлений прапорець `ApplicationInfo.FLAG_DEBUGGABLE` — ловить випадкове відправлення debug-збірки в прод. | `.disableDebugBuildCheck()` |
+| `DebuggerCheck` | 🅺 `0.1.0` / 🇨 `0.2.0` | Приєднаний JDWP-налагоджувач (Android Studio Debug, IntelliJ) АБО нативний ptrace-tracer (Frida server, gdb, strace). Комбінує Java `Debug.isDebuggerConnected()` з читанням `TracerPid` — жодне з двох окремо не ловить обидві загрози. | `.disableDebuggerCheck()` |
+| `RootCheck` | 🅺 | 10 відомих шляхів до `su`, 12 відомих root-менеджер-пакетів (`com.topjohnwu.magisk`, `eu.chainfire.supersu`, …), `Build.TAGS = "test-keys"`. | `.disableRootCheck()` |
+| `FridaCheck` | 🅺 `0.1.0` / 🇨 `0.2.0` | У `/proc/self/maps` знайдено `frida` / `gum-js-loop` / `gadget`. У версії `0.2.0` — нативний C++, стійкий до Java-хуків на `File.readLines`. | `.disableFridaCheck()` |
+| `ZygiskCheck` ✨ `0.2.0` | 🇨 | У `/proc/self/maps` знайдено ін'єкцію Zygisk / Riru. Ловить Magisk-based приховувальники, що обходять file-path root-детекцію. | `.disableZygiskCheck()` |
+| `XposedCheck` | 🅺 | Клас `de.robv.android.xposed.XposedBridge` завантажується, файл `/system/framework/XposedBridge.jar` присутній, фрейми Xposed у пробному stack trace (ловить LSPosed навіть коли клас прихований). | `.disableXposedCheck()` |
+| `InstallerCheck` | 🅺 | Installer-пакет застосунку (через `PackageManager.getInstallSourceInfo`) не в дозволеному наборі. За замовч.: лише `com.android.vending`. Налаштовується через `.allowedInstallers(...)`. | `.disableInstallerCheck()` |
 
-Neither runs unless you call the corresponding `addXxx` method on the builder.
+**Ключова відмінність версій:** у `0.2.0` `FridaCheck` і `DebuggerCheck`
+переписані на нативний C++ (значно стійкіші до обходу через LSPosed або
+Java-рівневі хуки), і додано зовсім нову `ZygiskCheck`.
+
+### Opt-in перевірки (не в дефолтному наборі)
+
+Не запускаються, поки ви не викличете відповідний `addXxx` метод.
+
+Присутні в **обох версіях**. Реалізація ідентична.
 
 #### `addSignatureValidator(expectedSha256)`
 
-Compares SHA-256 of the APK's signing certificate against an expected
-value hardcoded in your app. Detects repackaging even when the attacker
-kept the package name.
+Порівнює SHA-256 сертифіката підпису APK з очікуваним значенням, зашитим
+у застосунку. Виявляє перепакування навіть коли атакуючий залишив
+package name.
 
 ```kotlin
 .addSignatureValidator(
@@ -208,16 +228,16 @@ kept the package name.
 )
 ```
 
-Colons, dashes, spaces and case are all normalised — pass whatever
-`keytool` gave you.
+Двокрапки, дефіси, пробіли й регістр нормалізуються — передавайте що
+завгодно у форматі виводу `keytool`.
 
-**How to get the expected hash for your keystore:**
+**Як отримати хеш для вашого keystore:**
 
 ```bash
 keytool -list -v -keystore my-release-key.jks -alias my-alias | grep SHA256
 ```
 
-For the debug keystore Android Studio uses by default:
+Для debug-keystore, який Android Studio використовує за замовчуванням:
 
 ```bash
 keytool -list -v \
@@ -227,32 +247,33 @@ keytool -list -v \
   -keypass android | grep SHA256
 ```
 
-Ship the hash as a Kotlin string constant — **do not read it from a
-resource** (attackers patching the APK will also patch the resource).
+Зашивайте хеш як Kotlin string-константу — **не** читайте з ресурсу
+(атакуючий, що патчить APK, так само пропатчить і ресурс).
 
 #### `addPlayIntegrityValidator(cloudProjectNumber, verifier)`
 
-Requests a Google Play Integrity token, then delegates the verdict to a
-`verifier` lambda you provide.
+Запитує токен Google Play Integrity, потім делегує вердикт вашій
+`verifier` лямбді.
 
 ```kotlin
 .addPlayIntegrityValidator(
     cloudProjectNumber = 1234567890L,
     verifier = { token ->
-        // Send the token to YOUR backend for decryption and verdict inspection.
+        // Надішліть токен на ВАШ бекенд для розшифрування та інспекції вердиктів.
         myBackend.verifyIntegrityToken(token)
     },
 )
 ```
 
-**Why the verifier is mandatory:** the Play Integrity response is
-encrypted with a key held by your GCP service account. Only your backend
-can decrypt it and read the verdicts (`deviceIntegrity.deviceRecognitionVerdict`,
+**Чому `verifier` обов'язковий:** відповідь Play Integrity зашифрована
+ключем із вашого GCP service account. Лише ваш бекенд може її
+розшифрувати та прочитати вердикти (`deviceIntegrity.deviceRecognitionVerdict`,
 `appIntegrity.appRecognitionVerdict`, `accountDetails.appLicensingVerdict`).
-Any client-side interpretation is trivially defeated by an on-device MITM
-substituting a fake response. The library refuses to guess.
+Будь-яка клієнтська інтерпретація тривіально обходиться MITM'ом
+відповіді на скомпрометованому пристрої. Бібліотека відмовляється
+вгадувати.
 
-If you accept the risk for a prototype and want an inline verifier:
+Якщо для прототипу згодні на клієнтську інтерпретацію:
 
 ```kotlin
 verifier = { token ->
@@ -262,17 +283,18 @@ verifier = { token ->
 }
 ```
 
-**Requirements:**
-- Google Play Services 22+ on the device
-- App linked to a GCP project (Cloud Console → project number)
-- Device must have Google Play Store — the check fails on Huawei-only
-  devices, most emulators, and de-Googled ROMs. That is by design.
+**Вимоги:**
+- Google Play Services 22+ на пристрої
+- Застосунок прив'язаний до GCP проєкту (Cloud Console → project number)
+- На пристрої має бути Google Play Store — перевірка провалиться на
+  Huawei-only пристроях, більшості емуляторів, ROM'ах без Google-сервісів.
+  Це поведінка за задумом.
 
 ---
 
-## Recipes
+## Рецепти
 
-### Fail-fast at app start
+### Fail-fast при старті застосунку
 
 ```kotlin
 class MyApp : Application() {
@@ -283,8 +305,8 @@ class MyApp : Application() {
             .addSignatureValidator(expectedSha256 = BuildConfig.RELEASE_SIGNATURE_SHA256)
             .build()
 
-        // Fire-and-forget: don't block onCreate, but bring down the app
-        // early if the environment is compromised.
+        // Fire-and-forget: не блокуємо onCreate, але вбиваємо застосунок
+        // якщо оточення скомпрометовано.
         GlobalScope.launch(Dispatchers.Default) {
             if (!secureCheck.check()) {
                 android.os.Process.killProcess(android.os.Process.myPid())
@@ -294,7 +316,7 @@ class MyApp : Application() {
 }
 ```
 
-### Reactive UI with diagnostic breakdown
+### Реактивний UI з діагностичною розбивкою
 
 ```kotlin
 @Composable
@@ -322,7 +344,7 @@ fun SecurityGate(content: @Composable () -> Unit) {
 }
 ```
 
-### Different behavior per check
+### Різна поведінка на різні провалені перевірки
 
 ```kotlin
 val result = secureCheck.checkDetailed()
@@ -330,20 +352,20 @@ if (result.passed) return
 
 result.failedChecks.forEach { outcome ->
     when (outcome.name) {
-        "InstallerCheck"   -> promptOpenPlayStore()
-        "RootCheck"        -> warnRootedDevice()
-        "SignatureCheck"   -> hardBlock("Tampered APK")
+        "InstallerCheck"     -> promptOpenPlayStore()
+        "RootCheck"          -> warnRootedDevice()
+        "SignatureCheck"     -> hardBlock("Підмінений APK")
         "PlayIntegrityCheck" -> logToTelemetry("integrity failure", outcome.error)
-        else               -> logToTelemetry("security failure: ${outcome.name}", outcome.error)
+        else                 -> logToTelemetry("security failure: ${outcome.name}", outcome.error)
     }
 }
 ```
 
-### Debug builds — relaxed policy
+### Debug-збірки — послаблена політика
 
-Some checks legitimately fail during development (`DebuggerCheck` when
-running under Android Studio Debug, `InstallerCheck` when `adb install`
-sets the installer to `null`). Turn them off in debug:
+Деякі перевірки закономірно провалюються під час розробки (`DebuggerCheck`
+при запуску з Android Studio Debug, `InstallerCheck` при `adb install`,
+який виставляє installer у `null`). Вимикайте їх для debug:
 
 ```kotlin
 SecureCheck.Builder(context)
@@ -358,9 +380,9 @@ SecureCheck.Builder(context)
     .build()
 ```
 
-Or gate the whole `secureCheck.check()` call behind `!BuildConfig.DEBUG`.
+Або взагалі виконуйте `secureCheck.check()` тільки якщо `!BuildConfig.DEBUG`.
 
-### Multi-store distribution
+### Мульти-стор дистрибуція
 
 ```kotlin
 .allowedInstallers(
@@ -374,99 +396,113 @@ Or gate the whole `secureCheck.check()` call behind `!BuildConfig.DEBUG`.
 
 ---
 
-## Requirements
+## Вимоги
 
-- **Consumer `minSdk`**: 26 (Android 8.0)
-- **`compileSdk`**: 33+ recommended
-- **Kotlin**: 1.9+ (uses stdlib `suspend`)
+- **`minSdk` споживача**: 26 (Android 8.0)
+- **`compileSdk`**: 33+ рекомендовано
+- **Kotlin**: 1.9+ (використовує stdlib `suspend`)
 - **Android Gradle Plugin**: 7.4+
-- **Play Integrity check only**: device with Google Play Services
+- **Тільки для Play Integrity**: пристрій з Google Play Services
 
-No NDK required on the consumer side — JitPack builds and packages the
-native components.
-
----
-
-## Caveats
-
-- **`DebuggerCheck` fails when running under Android Studio's *Debug*
-  configuration.** Use *Run* (Shift+F10), or add `.disableDebuggerCheck()`
-  under `if (BuildConfig.DEBUG)`.
-- **`InstallerCheck` fails during local development** (installed via
-  `adb`, which sets installer to `null`). Disable in debug builds or
-  install via Play Console Internal Testing.
-- **Root / Frida / Xposed / Zygisk detectors are heuristic.** Determined
-  attackers running Magisk with Shamiko, LSPosed with hooked `File.exists`,
-  or patched Frida gadgets will bypass individual checks. The library
-  gives defense in depth, not perfect coverage. Combine with server-side
-  signals (Play Integrity forwarded to your backend, behavioural analytics).
-- **Play Integrity is only meaningful with backend verification.** A
-  compromised device can inject a fake success response; only your backend
-  reading Google's decrypted verdict is trustworthy.
-- **Some verdicts are one-shot per launch.** `check()` re-runs everything
-  each call, but system state (rooted / not) doesn't usually change
-  mid-session. Cache the result at the app level if you invoke it often.
-- **First JitPack build for a fresh tag takes 3–10 minutes** on JitPack's
-  side. If a developer syncs a brand-new version right after your `git
-  tag`, they'll see JitPack building in the sync log. Subsequent syncs
-  pull from JitPack's cache instantly.
+NDK на боці споживача не потрібен — JitPack збирає й пакує нативні
+компоненти (`0.2.0`).
 
 ---
 
-## Releasing a new version (maintainer notes)
+## Застереження
 
-1. Bump `version` in `securecheck/build.gradle.kts` (e.g. `0.2.0` → `0.3.0`)
-2. Update this README's `implementation("com.github.EIDevelop0:SecureLib:X.Y.Z")` line
-3. Commit and push
-4. Tag the commit: `git tag 0.3.0 && git push origin 0.3.0`
-5. (Optional) Open the tag in JitPack (`https://jitpack.io/com/github/EIDevelop0/SecureLib/0.3.0/`)
-   to pre-warm the build — otherwise the first consumer to request that
-   version will trigger it (and wait a few minutes)
+### Спільні для всіх версій
 
-Consumers then update the version string. No republishing action needed
-from the maintainer's side beyond pushing the tag.
+- **`DebuggerCheck` провалюється при запуску під конфігурацією *Debug*
+  в Android Studio.** Використовуйте *Run* (Shift+F10) або додайте
+  `.disableDebuggerCheck()` в блоці `if (BuildConfig.DEBUG)`.
+- **`InstallerCheck` провалюється під час локальної розробки**
+  (встановлення через `adb`, який виставляє installer у `null`).
+  Вимикайте в debug-збірках або тестуйте через Play Console Internal Testing.
+- **Root / Frida / Xposed / Zygisk детектори евристичні.** Наполегливі
+  атакуючі з Magisk + Shamiko, LSPosed з хуками на `File.exists` або
+  пропатчений Frida gadget обходять окремі перевірки. Бібліотека дає
+  ешелоновану оборону, а не ідеальне покриття. Комбінуйте з серверними
+  сигналами (Play Integrity, forwarded to backend, behavioural analytics).
+- **Play Integrity має сенс лише з бекенд-валідацією.** Скомпрометований
+  пристрій може підмінити відповідь на успішну; лише ваш бекенд, що читає
+  розшифрований Google-вердикт, — надійний.
+- **Стан системи змінюється рідко в межах сесії.** `check()` перезапускає
+  все на кожен виклик, але (рутовано / не рутовано) в мідлі сесії не
+  змінюється. Кешуйте результат на рівні застосунку, якщо викликаєте часто.
+- **Перша збірка нового тегу в JitPack — 3–10 хвилин.** Розробник, що
+  синкне свіжу версію одразу після `git tag`, побачить лог JitPack'у в
+  Gradle sync. Наступні синки — з кеша JitPack'у миттєво.
+
+### Специфічно для `0.2.0` (native)
+
+- Розмір AAR — ~3 MB (4 ABI по ~800 KB). Якщо ваш застосунок цільує
+  тільки arm64 — можете додати `abiFilters` в `defaultConfig.ndk` вашого
+  застосунку, JitPack-варіант це поважає.
+- Якщо нативна бібліотека не завантажилась (`UnsatisfiedLinkError` в
+  `outcome.error`) — це швидше за все атака на процес. Перевірки
+  провалюються навмисно.
 
 ---
 
-## Developing the library
+## Випуск нової версії (для мейнтейнерів)
 
-Open the whole `SecureLib` project in Android Studio. The `:app` module
-depends on `:securecheck` via `project(":securecheck")`, so any change
-to the library is immediately visible in the sample app — no publishing
-required for local iteration.
+1. Оновіть `version` у `securecheck/build.gradle.kts` (напр. `0.2.0` → `0.3.0`)
+2. Оновіть у цьому README рядок `implementation("com.github.EIDevelop0:SecureLib:X.Y.Z")`
+3. Закомітьте й пушніть
+4. Позначте тегом: `git tag 0.3.0 && git push origin 0.3.0`
+5. (Опційно) Відкрийте тег у JitPack —
+   `https://jitpack.io/com/github/EIDevelop0/SecureLib/0.3.0/` — щоб
+   заздалегідь прогріти збірку. Інакше перший споживач, що запитає цю
+   версію, тригерне її сам (і почекає кілька хвилин).
+
+Споживачі просто оновлюють рядок версії. Жодних додаткових дій від
+мейнтейнера крім push тегу не потрібно.
+
+---
+
+## Розробка бібліотеки
+
+Відкрийте весь `SecureLib` в Android Studio. Модуль `:app` залежить від
+`:securecheck` через `project(":securecheck")`, тож будь-яка зміна в
+бібліотеці одразу видима в демо-застосунку — публікація не потрібна.
 
 ```
-./gradlew :securecheck:assembleRelease       # build the AAR standalone
-./gradlew :app:installDebug                  # run the sample app on a connected device
-./gradlew :securecheck:publishToMavenLocal   # smoke-test Maven coordinates locally
+./gradlew :securecheck:assembleRelease       # зібрати AAR окремо
+./gradlew :app:installDebug                  # запустити демо на підключеному пристрої
+./gradlew :securecheck:publishToMavenLocal   # smoke-тест Maven-координат локально
 ```
 
-Repository layout:
+Структура репозиторію:
 
 ```
 SecureLib/
-├── app/           Sample application for developing and testing the library
-└── securecheck/   The library module consumers actually import
-    ├── src/main/cpp/       Native C++ sources (Frida / Debugger / Zygisk probes)
-    ├── src/main/java/      Kotlin API, check implementations, Builder
-    └── build.gradle.kts    CMake wiring, ABIs, maven-publish config
+├── app/           Демо-застосунок для розробки та тестування бібліотеки
+└── securecheck/   Модуль бібліотеки, який імпортують споживачі
+    ├── src/main/cpp/       Native C++ джерела (тільки в 0.2.0+)
+    ├── src/main/java/      Kotlin API, реалізації перевірок, Builder
+    └── build.gradle.kts    CMake wiring (0.2.0+), ABI, maven-publish
 ```
 
----
-
-## Credits
-
-Native detection techniques for Frida, debugger, and Zygisk (in
-`securecheck/src/main/cpp/`) are inspired by
-[NativeShield](https://github.com/PhuongDoZz/NativeShield) by PhuongDoZz
-(MIT © 2025). Implementations here are original and rewritten around
-this library's on-demand `check(): Boolean` API rather than
-NativeShield's continuous background-thread logging model.
+**Гілки:**
+- `master` — версія `0.1.0` (чистий Kotlin)
+- `native_shield_update` — версія `0.2.0` (додає native C++ бекенд і `ZygiskCheck`)
 
 ---
 
-## License
+## Кредити
 
-TBD — decide before public release. If you plan to distribute this to
-consumers outside your organization, add an explicit `LICENSE` file at
-the repository root.
+Нативні техніки виявлення Frida, налагоджувача і Zygisk (в
+`securecheck/src/main/cpp/`, версія `0.2.0`) натхнені проєктом
+[NativeShield](https://github.com/PhuongDoZz/NativeShield) від
+PhuongDoZz (MIT © 2025). Імплементації тут — оригінальні, переписані
+під on-demand `check(): Boolean` API цієї бібліотеки, а не під
+continuous background-thread модель NativeShield.
+
+---
+
+## Ліцензія
+
+TBD — визначити перед публічним релізом. Якщо плануєте поширювати
+бібліотеку за межі організації, додайте явний `LICENSE` файл у корені
+репозиторію.
